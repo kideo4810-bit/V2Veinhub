@@ -1,1 +1,440 @@
+-- StarterPlayer > StarterPlayerScripts > LocalScript
+-- Dev test only: Local-only no recoil patcher for your own game
 
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local enabled = false
+local isAuthorized = false
+
+local VALID_KEYS = {
+	["vein_2%16/2DyK"] = true,
+	["1234"] = true,
+}
+
+local originals = {}
+local patchedTools = {}
+
+local MODULE_NAMES = {
+	Config = true,
+	PassConfig = true,
+	Gun = true,
+}
+
+local FLAT_PATCH = {
+	Recoil = 0,
+	AngleX_Min = 0,
+	AngleX_Max = 0,
+	AngleY_Min = 0,
+	AngleY_Max = 0,
+	AngleZ_Min = 0,
+	AngleZ_Max = 0,
+	RecoilSpeed = 0,
+	RecoilDamper = 1,
+	RecoilRedution = 1,
+	Spread = 0,
+	CrossExpansion = 0,
+}
+
+local AIM_PATCH = {
+	RecoilReduction_X = 0,
+	RecoilReduction_Y = 0,
+	RecoilReduction_Z = 0,
+}
+
+local function saveOriginal(tbl, key, value)
+	if originals[tbl] == nil then
+		originals[tbl] = {}
+	end
+	if originals[tbl][key] == nil then
+		originals[tbl][key] = value
+	end
+end
+
+local function patchTable(tbl)
+	if type(tbl) ~= "table" then
+		return false
+	end
+
+	local changed = false
+
+	for key, value in pairs(FLAT_PATCH) do
+		if tbl[key] ~= nil then
+			saveOriginal(tbl, key, tbl[key])
+			tbl[key] = value
+			changed = true
+		end
+	end
+
+	if type(tbl.AimSettings) == "table" then
+		for key, value in pairs(AIM_PATCH) do
+			if tbl.AimSettings[key] ~= nil then
+				saveOriginal(tbl.AimSettings, key, tbl.AimSettings[key])
+				tbl.AimSettings[key] = value
+				changed = true
+			end
+		end
+	end
+
+	return changed
+end
+
+local function restoreTable(tbl)
+	local saved = originals[tbl]
+	if not saved then
+		return
+	end
+
+	for key, value in pairs(saved) do
+		tbl[key] = value
+	end
+
+	originals[tbl] = nil
+end
+
+local function tryRequire(mod)
+	local ok, result = pcall(require, mod)
+	if not ok then
+		return nil
+	end
+	return result
+end
+
+local function patchTool(tool)
+	if not tool or not tool:IsA("Tool") then
+		return
+	end
+
+	if patchedTools[tool] then
+		return
+	end
+
+	for _, child in ipairs(tool:GetChildren()) do
+		if child:IsA("ModuleScript") and MODULE_NAMES[child.Name] then
+			local result = tryRequire(child)
+			if type(result) == "table" then
+				patchTable(result)
+			end
+		end
+	end
+
+	patchedTools[tool] = true
+end
+
+local function restoreTool(tool)
+	if not tool or not tool:IsA("Tool") then
+		return
+	end
+
+	for _, child in ipairs(tool:GetChildren()) do
+		if child:IsA("ModuleScript") and MODULE_NAMES[child.Name] then
+			local result = tryRequire(child)
+			if type(result) == "table" then
+				restoreTable(result)
+			end
+		end
+	end
+
+	patchedTools[tool] = nil
+end
+
+local function getAllTools()
+	local list = {}
+
+	local backpack = player:FindFirstChild("Backpack")
+	if backpack then
+		for _, obj in ipairs(backpack:GetChildren()) do
+			if obj:IsA("Tool") then
+				table.insert(list, obj)
+			end
+		end
+	end
+
+	local char = player.Character
+	if char then
+		for _, obj in ipairs(char:GetChildren()) do
+			if obj:IsA("Tool") then
+				table.insert(list, obj)
+			end
+		end
+	end
+
+	return list
+end
+
+local function applyState()
+	if not isAuthorized then
+		return
+	end
+
+	for _, tool in ipairs(getAllTools()) do
+		if enabled then
+			patchTool(tool)
+		else
+			restoreTool(tool)
+		end
+	end
+end
+
+-- UI
+local gui = Instance.new("ScreenGui")
+gui.Name = "LocalNoRecoilUI"
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
+
+-- Main panel
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(170, 68)
+frame.Position = UDim2.fromOffset(40, 180)
+frame.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+frame.BorderSizePixel = 0
+frame.Visible = false
+frame.Parent = gui
+
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(0, 8)
+frameCorner.Parent = frame
+
+local frameStroke = Instance.new("UIStroke")
+frameStroke.Transparency = 0.35
+frameStroke.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency = 1
+title.Size = UDim2.new(1, -10, 0, 22)
+title.Position = UDim2.fromOffset(5, 4)
+title.Text = "Local No Recoil"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 14
+title.Font = Enum.Font.GothamSemibold
+title.Parent = frame
+
+local button = Instance.new("TextButton")
+button.Size = UDim2.new(1, -12, 0, 30)
+button.Position = UDim2.fromOffset(6, 30)
+button.BackgroundColor3 = Color3.fromRGB(80, 32, 32)
+button.TextColor3 = Color3.fromRGB(255, 255, 255)
+button.TextSize = 14
+button.Font = Enum.Font.GothamBold
+button.Parent = frame
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0, 6)
+buttonCorner.Parent = button
+
+local function refreshButton()
+	if enabled then
+		button.Text = "ON"
+		button.BackgroundColor3 = Color3.fromRGB(30, 90, 40)
+	else
+		button.Text = "OFF"
+		button.BackgroundColor3 = Color3.fromRGB(90, 35, 35)
+	end
+end
+
+refreshButton()
+
+button.MouseButton1Click:Connect(function()
+	if not isAuthorized then
+		return
+	end
+
+	enabled = not enabled
+	refreshButton()
+	applyState()
+end)
+
+-- Key panel
+local keyFrame = Instance.new("Frame")
+keyFrame.Size = UDim2.fromOffset(230, 120)
+keyFrame.Position = UDim2.fromOffset(40, 180)
+keyFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+keyFrame.BorderSizePixel = 0
+keyFrame.Parent = gui
+
+local keyCorner = Instance.new("UICorner")
+keyCorner.CornerRadius = UDim.new(0, 8)
+keyCorner.Parent = keyFrame
+
+local keyStroke = Instance.new("UIStroke")
+keyStroke.Transparency = 0.35
+keyStroke.Parent = keyFrame
+
+local keyTitle = Instance.new("TextLabel")
+keyTitle.BackgroundTransparency = 1
+keyTitle.Size = UDim2.new(1, -10, 0, 22)
+keyTitle.Position = UDim2.fromOffset(5, 4)
+keyTitle.Text = "Enter Key"
+keyTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+keyTitle.TextSize = 14
+keyTitle.Font = Enum.Font.GothamSemibold
+keyTitle.Parent = keyFrame
+
+local keyBox = Instance.new("TextBox")
+keyBox.Size = UDim2.new(1, -12, 0, 30)
+keyBox.Position = UDim2.fromOffset(6, 32)
+keyBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+keyBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+keyBox.PlaceholderText = "Type key here"
+keyBox.Text = ""
+keyBox.TextSize = 14
+keyBox.Font = Enum.Font.Gotham
+keyBox.ClearTextOnFocus = false
+keyBox.Parent = keyFrame
+
+local keyBoxCorner = Instance.new("UICorner")
+keyBoxCorner.CornerRadius = UDim.new(0, 6)
+keyBoxCorner.Parent = keyBox
+
+local submitButton = Instance.new("TextButton")
+submitButton.Size = UDim2.new(1, -12, 0, 30)
+submitButton.Position = UDim2.fromOffset(6, 68)
+submitButton.BackgroundColor3 = Color3.fromRGB(55, 90, 160)
+submitButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+submitButton.Text = "Submit"
+submitButton.TextSize = 14
+submitButton.Font = Enum.Font.GothamBold
+submitButton.Parent = keyFrame
+
+local submitCorner = Instance.new("UICorner")
+submitCorner.CornerRadius = UDim.new(0, 6)
+submitCorner.Parent = submitButton
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.BackgroundTransparency = 1
+statusLabel.Size = UDim2.new(1, -12, 0, 16)
+statusLabel.Position = UDim2.fromOffset(6, 100)
+statusLabel.Text = ""
+statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = keyFrame
+
+local function unlockUI()
+	isAuthorized = true
+	keyFrame.Visible = false
+	frame.Visible = true
+	statusLabel.Text = ""
+end
+
+local function tryKey()
+	local entered = tostring(keyBox.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+
+	if VALID_KEYS[entered] then
+		unlockUI()
+	else
+		statusLabel.Text = "Invalid key"
+	end
+end
+
+submitButton.MouseButton1Click:Connect(tryKey)
+
+keyBox.FocusLost:Connect(function(enterPressed)
+	if enterPressed then
+		tryKey()
+	end
+end)
+
+-- Drag main frame
+local dragging = false
+local dragStart
+local startPos
+
+title.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = input.Position
+		startPos = frame.Position
+	end
+end)
+
+title.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = false
+	end
+end)
+
+-- Drag key frame
+local keyDragging = false
+local keyDragStart
+local keyStartPos
+
+keyTitle.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		keyDragging = true
+		keyDragStart = input.Position
+		keyStartPos = keyFrame.Position
+	end
+end)
+
+keyTitle.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		keyDragging = false
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - dragStart
+		frame.Position = UDim2.fromOffset(
+			startPos.X.Offset + delta.X,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+
+	if keyDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - keyDragStart
+		keyFrame.Position = UDim2.fromOffset(
+			keyStartPos.X.Offset + delta.X,
+			keyStartPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- Watch tools
+local function hookContainer(container)
+	container.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			task.defer(function()
+				if enabled and isAuthorized then
+					patchTool(child)
+				end
+			end)
+		end
+	end)
+
+	container.ChildRemoved:Connect(function(child)
+		if child:IsA("Tool") then
+			restoreTool(child)
+		end
+	end)
+end
+
+local backpack = player:WaitForChild("Backpack")
+hookContainer(backpack)
+
+local function onCharacter(char)
+	hookContainer(char)
+	task.defer(applyState)
+end
+
+if player.Character then
+	onCharacter(player.Character)
+end
+player.CharacterAdded:Connect(onCharacter)
+
+-- Late init safety
+RunService.RenderStepped:Connect(function()
+	if enabled and isAuthorized then
+		for _, tool in ipairs(getAllTools()) do
+			if not patchedTools[tool] then
+				patchTool(tool)
+			end
+		end
+	end
+end)
